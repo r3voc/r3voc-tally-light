@@ -39,7 +39,7 @@ jobs:
       - name: Create secrets.env file
         working-directory: ./tallylight-mcu-software
         run: |
-          echo "OTA_PASSWORD=${{ secrets.OTA_PASSWORD }}" >> secrets.env
+          echo "OTA_PASSWORD=${{ secrets.OTA_SERVER_UPLOAD_KEY }}" >> secrets.env
           echo "AP_PASSWORD=${{ secrets.AP_PASSWORD }}" >> secrets.env
           echo "API_KEY=${{ secrets.API_KEY }}" >> secrets.env
           echo "OTA_SERVER_BASE_URL=${{ secrets.OTA_SERVER_BASE_URL }}" >> secrets.env
