@@ -430,7 +430,24 @@ void loop()
         httpUpdate.onError([](int err)
                            {
                               otaInProgress = false;
-                              Serial.printf("OTA Error: %d - %s\n", err, httpUpdate.getLastErrorString().c_str()); });
+                              Serial.printf("OTA Error: %d - %s\n", err, httpUpdate.getLastErrorString().c_str()); 
+
+                              // blink red 3 times
+                              for (int i = 0; i < 3; i++)
+                              {
+                                  fill_solid(leds, ledCount, CRGB::Red);
+                                  FastLED.show();
+                                  delay(250);
+                                  fill_solid(leds, ledCount, CRGB::Black);
+                                  FastLED.show();
+                                  delay(250);
+                              }
+
+                              // reboot after 5 seconds. yes, this could be a boot-loop, but if that happens then we will notice anyways
+                              Serial.println("Rebooting in 5 seconds...");
+                              delay(5000);
+                              ESP.restart();
+                            });
 
         t_httpUpdate_return ret = httpUpdate.update(client, "http://" OTA_SERVER_BASE_URL "/api/v1/firmware/latest?device_type=esp32dev", GIT_HASH, [](HTTPClient *client)
                                                     {
