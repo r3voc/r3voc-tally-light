@@ -395,16 +395,47 @@ void loop()
         // stop server
         return;
     }
-    
+
     if (WiFi.status() == WL_CONNECTED && !hasTriedOta)
     {
         hasTriedOta = true;
         NetworkClient client;
         Serial.println("Checking for OTA update...");
-        t_httpUpdate_return ret = httpUpdate.update(client, "http://" OTA_SERVER_BASE_URL "/api/v1/firmware/latest?device_type=esp32dev", GIT_HASH, [](HTTPClient *client) {
+        httpUpdate.onStart([]()
+                           {
+                               otaInProgress = true;
+                               Serial.println("OTA Update Start");    
+                               lastOtaTime = millis();
+
+                                fill_rainbow(leds, ledCount, 0, 255 / ledCount);
+                                FastLED.show(); });
+        httpUpdate.onEnd([]()
+                         {
+                             otaInProgress = false;
+                             Serial.println("OTA Update End"); });
+        httpUpdate.onProgress([](unsigned int progress, unsigned int total)
+                              { 
+                                // print
+                                otaInProgress = true;
+                                if (millis() - lastOtaTime > 500) {
+                                    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+                                    lastOtaTime = millis();
+
+                                    // fade from red to green
+                                    uint8_t percent = progress / (total / 100);
+                                    fill_solid(leds, ledCount, CRGB(255 - (percent * 2.55), percent * 2.55, 0));
+                                    FastLED.show();
+                                } 
+                        });
+        httpUpdate.onError([](int err)
+                           {
+                              otaInProgress = false;
+                              Serial.printf("OTA Error: %d - %s\n", err, httpUpdate.getLastErrorString().c_str()); });
+
+        t_httpUpdate_return ret = httpUpdate.update(client, "http://" OTA_SERVER_BASE_URL "/api/v1/firmware/latest?device_type=esp32dev", GIT_HASH, [](HTTPClient *client)
+                                                    {
             client->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-            client->addHeader("X-Api-Key", OTA_PASSWORD);
-        });
+            client->addHeader("X-Api-Key", OTA_PASSWORD); });
         switch (ret)
         {
         case HTTP_UPDATE_FAILED:
