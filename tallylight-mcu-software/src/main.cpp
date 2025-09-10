@@ -383,6 +383,8 @@ void setup()
 
     // configure time client
     timeClient.begin();
+
+    timeClient.forceUpdate();
 }
 
 bool hasTriedOta = false;
