@@ -4,6 +4,8 @@ services:
       image: ghcr.io/realraum/r3voc-tally-light:latest
       container_name: r3voc-tallylight
       network_mode: host # required for mDNS
+      cap_add:
+        - NET_ADMIN # required for mDNS
       restart: unless-stopped
       environment:
         - PORT=3000 # change if needed
