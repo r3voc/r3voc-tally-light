@@ -53,7 +53,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         working-directory: ./tallylight-mcu-software
         run: |
-          curl -X POST "${{ secrets.OTA_SERVER_BASE_URL }}/api/v1/firmware" \
+          curl -X POST "https://${{ secrets.OTA_SERVER_BASE_URL }}/api/v1/firmware" \
             -H "x-api-key: ${{ secrets.OTA_SERVER_UPLOAD_KEY }}" \
             -F "firmware=@.pio/build/esp32dev/firmware.bin" \
             -F "version=${{ github.sha }}" \

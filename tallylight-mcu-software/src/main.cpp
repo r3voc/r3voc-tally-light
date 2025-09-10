@@ -401,7 +401,7 @@ void loop()
         hasTriedOta = true;
         NetworkClient client;
         Serial.println("Checking for OTA update...");
-        t_httpUpdate_return ret = httpUpdate.update(client, OTA_SERVER_BASE_URL "/api/v1/firmware/latest?device_type=esp32dev", GIT_HASH, [](HTTPClient *client) {
+        t_httpUpdate_return ret = httpUpdate.update(client, "http://" OTA_SERVER_BASE_URL "/api/v1/firmware/latest?device_type=esp32dev", GIT_HASH, [](HTTPClient *client) {
             client->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
             client->addHeader("X-Api-Key", OTA_PASSWORD);
         });
