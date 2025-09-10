@@ -1,16 +1,14 @@
-import {Bonjour, Service} from 'bonjour-service';
+import {Bonjour, Browser, Service} from 'bonjour-service';
 import express from 'express';
 import fs from 'fs';
 import cors from 'cors';
 import {OBSWebSocket} from 'obs-websocket-js';
 
-const instance = new Bonjour();
-
 const obs = new OBSWebSocket();
 
 // connect to localhost
 
-const tallyLightServices: Service[] = [];
+const tallyLightServices: { service: Service; lastPing: Date | null }[] = [];
 
 export type FQDN = string;
 
@@ -28,6 +26,7 @@ export interface TallyLightMapping {
 export interface ServerConfig {
     lights: Record<FQDN, TallyLightMapping>;
     obsPassword: string;
+    apiKey: string;
     version: number;
 }
 
@@ -37,14 +36,49 @@ export interface SetTallyLightStateSuccessResponse {
     brightness: number;
 }
 
+class TallyLightError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'TallyLightError';
+    }
+}
+
+class TallyLightOfflineError extends TallyLightError {
+    constructor(message: string) {
+        super(message);
+        this.name = 'TallyLightOfflineError';
+    }
+}
+
+class TallyLightInvalidApiKeyError extends TallyLightError {
+    constructor(message: string) {
+        super(message);
+        this.name = 'TallyLightInvalidApiKeyError';
+    }
+}
+
 export interface SetTallyLightStateFailureResponse {
     success: false;
-    error: string;
+    error: string | TallyLightError;
 }
 
 export type SetTallyLightStateResponse = SetTallyLightStateSuccessResponse | SetTallyLightStateFailureResponse;
 
 const currentLightState: Record<FQDN, TallyLightState> = {};
+
+export interface TallylightInfo {
+    hostname: string;
+    ip: string;
+    tallyState: TallyLightState;
+    gitHash: string;
+    gitDirty: 'dirty' | 'clean';
+    brightness: number;
+    millis: number;
+    rssi: number;
+    utcEpoch: number;
+}
+
+const tallylightInfos: Record<FQDN, TallylightInfo> = {};
 
 const currentState: {
     previewSceneUuid: SceneUuid | null;
@@ -52,7 +86,12 @@ const currentState: {
 } = {previewSceneUuid: null, programSceneUuid: null};
 
 // Load server configuration
-const defaultConfig: ServerConfig = {lights: {}, obsPassword: '', version: 1};
+const defaultConfig: ServerConfig = {
+    lights: {},
+    obsPassword: '',
+    apiKey: '',
+    version: 2
+};
 
 let serverConfig: ServerConfig = defaultConfig;
 
@@ -86,8 +125,6 @@ for (const fqdn of Object.keys(serverConfig.lights)) {
     currentLightState[fqdn] = 'OFF';
 }
 
-const instanceBrowser = instance.find({type: 'tallylight'});
-
 export const updateConfig = async () => {
     try {
         fs.writeFileSync(configPath, JSON.stringify(serverConfig, null, 2), 'utf-8');
@@ -100,10 +137,9 @@ export const updateConfig = async () => {
 };
 
 export const setTallyLightState = async (tallyLightFqdn: FQDN, state: TallyLightState): Promise<SetTallyLightStateResponse> => {
-    const service = tallyLightServices.find(s => s.fqdn === tallyLightFqdn);
+    const service = tallyLightServices.find(s => s.service.fqdn === tallyLightFqdn)?.service;
     if (!service) {
-        console.warn(`Tally light with FQDN ${tallyLightFqdn} not online`);
-        return {success: false, error: 'Tally light not online'};
+        return {success: false, error: new TallyLightOfflineError(`Tally light with FQDN ${tallyLightFqdn} not online`)};
     }
 
     if (!service.addresses || service.addresses.length === 0) {
@@ -114,7 +150,7 @@ export const setTallyLightState = async (tallyLightFqdn: FQDN, state: TallyLight
     const brightness = serverConfig.lights[tallyLightFqdn]?.brightness || 255;
 
 
-    const url = `http://${service.addresses[0]}:${service.port}/set?state=${state}&brightness=${brightness}`;
+    const url = `http://${service.addresses[0]}:${service.port}/set?state=${state}&brightness=${brightness}&apiKey=${serverConfig.apiKey}`;
 
     const abortController = new AbortController();
     // timeout of 3s
@@ -126,6 +162,11 @@ export const setTallyLightState = async (tallyLightFqdn: FQDN, state: TallyLight
         const response = await fetch(url, {signal: abortController.signal});
         clearTimeout(timeout);
         if (!response.ok) {
+            // check if 403
+            if (response.status === 403) {
+                return {success: false, error: new TallyLightInvalidApiKeyError('Invalid API key')};
+            }
+
             console.error(`Failed to set state for ${tallyLightFqdn}:`, response.statusText);
             return {success: false, error: response.statusText};
         }
@@ -135,7 +176,9 @@ export const setTallyLightState = async (tallyLightFqdn: FQDN, state: TallyLight
             return result;
         }
     } catch (error) {
-        console.error(`Error setting state for ${tallyLightFqdn}:`, error);
+        if (error instanceof Error) {
+            console.warn(`Error setting state for ${tallyLightFqdn}:`, error.message);
+        }
         return {success: false, error: 'Network error'};
     }
 
@@ -148,9 +191,9 @@ export const executeForEachLight = (callback: (fqdn: FQDN, mapping: TallyLightMa
 }
 
 export const sendPing = async (tallyLightFqdn: FQDN): Promise<boolean> => {
-    const service = tallyLightServices.find(s => s.fqdn === tallyLightFqdn);
+    const service = tallyLightServices.find(s => s.service.fqdn === tallyLightFqdn)?.service;
     if (!service) {
-        console.warn(`Tally light with FQDN ${tallyLightFqdn} not online`);
+        console.warn('[sendPing]', `Tally light with FQDN ${tallyLightFqdn} not online`);
         return false;
     }
 
@@ -174,6 +217,13 @@ export const sendPing = async (tallyLightFqdn: FQDN): Promise<boolean> => {
             console.error(`Failed to ping ${tallyLightFqdn}:`, response.statusText);
             return false;
         }
+
+        // set last ping time
+        const light = tallyLightServices.find(s => s.service.fqdn === tallyLightFqdn);
+        if (light) {
+            light.lastPing = new Date();
+        }
+
         return true;
     } catch (error) {
         if (!(error instanceof Error && error.name === 'AbortError')) {
@@ -184,9 +234,9 @@ export const sendPing = async (tallyLightFqdn: FQDN): Promise<boolean> => {
 };
 
 export const identifyLight = async (tallyLightFqdn: FQDN): Promise<boolean> => {
-    const service = tallyLightServices.find(s => s.fqdn === tallyLightFqdn);
+    const service = tallyLightServices.find(s => s.service.fqdn === tallyLightFqdn)?.service;
     if (!service) {
-        console.warn(`Tally light with FQDN ${tallyLightFqdn} not online`);
+        console.warn('[identifyLight]', `Tally light with FQDN ${tallyLightFqdn} not online`);
         return false;
     }
 
@@ -195,7 +245,7 @@ export const identifyLight = async (tallyLightFqdn: FQDN): Promise<boolean> => {
         return false;
     }
 
-    const url = `http://${service.addresses[0]}:${service.port}/identify`;
+    const url = `http://${service.addresses[0]}:${service.port}/identify?apiKey=${serverConfig.apiKey}`;
 
     const abortController = new AbortController();
     // timeout of 3s
@@ -207,6 +257,11 @@ export const identifyLight = async (tallyLightFqdn: FQDN): Promise<boolean> => {
         const response = await fetch(url, {signal: abortController.signal});
         clearTimeout(timeout);
         if (!response.ok) {
+            if (response.status === 403) {
+                console.error(`Failed to identify ${tallyLightFqdn}: Invalid API key`);
+                return false;
+            }
+
             console.error(`Failed to identify ${tallyLightFqdn}:`, response.statusText);
             return false;
         }
@@ -219,23 +274,153 @@ export const identifyLight = async (tallyLightFqdn: FQDN): Promise<boolean> => {
     }
 };
 
-instanceBrowser.on('up', async (service) => {
-    tallyLightServices.push(service);
-    console.log('Found tally light service:', service.fqdn);
-    await handleUpdate();
-    await sendPing(service.fqdn);
-});
-
-instanceBrowser.on('down', (service) => {
-    console.log('Tally light service went down:', service.fqdn);
-
-    const index = tallyLightServices.findIndex(s => s.fqdn === service.fqdn);
-    if (index !== -1) {
-        tallyLightServices.splice(index, 1);
+export const fetchTallylightInfos = async (tallyLightFqdn: FQDN): Promise<TallylightInfo | null> => {
+    // fetch "/" endpoint
+    const service = tallyLightServices.find(s => s.service.fqdn === tallyLightFqdn)?.service;
+    if (!service) {
+        console.warn('[fetchTallylightInfos]', `Tally light with FQDN ${tallyLightFqdn} not online`);
+        return null;
     }
-});
 
-instanceBrowser.start();
+    if (!service.addresses || service.addresses.length === 0) {
+        console.warn(`Tally light with FQDN ${tallyLightFqdn} has no addresses`);
+        return null;
+    }
+
+    const url = `http://${service.addresses[0]}:${service.port}/`;
+
+    const abortController = new AbortController();
+    // timeout of 3s
+    const timeout = setTimeout(() => {
+        abortController.abort();
+    }, 3000);
+
+    try {
+        const response = await fetch(url, {signal: abortController.signal});
+        clearTimeout(timeout);
+        if (!response.ok) {
+            console.error(`Failed to fetch info from ${tallyLightFqdn}:`, response.statusText);
+            return null;
+        }
+        const result = await response.json() as TallylightInfo;
+        tallylightInfos[tallyLightFqdn] = result;
+        return result;
+    } catch (error) {
+        if (error instanceof Error) {
+            if (error.name !== 'AbortError') {
+                console.error(`Error fetching info from ${tallyLightFqdn}:`, error.message);
+            }
+        }
+    }
+
+    return null;
+};
+
+export const restartTallyLight = async (tallyLightFqdn: FQDN): Promise<boolean> => {
+    const service = tallyLightServices.find(s => s.service.fqdn === tallyLightFqdn)?.service;
+    if (!service) {
+        console.warn('[restartTallyLight]', `Tally light with FQDN ${tallyLightFqdn} not online`);
+        return false;
+    }
+
+    if (!service.addresses || service.addresses.length === 0) {
+        console.warn(`Tally light with FQDN ${tallyLightFqdn} has no addresses`);
+        return false;
+    }
+
+    const url = `http://${service.addresses[0]}:${service.port}/restart?apiKey=${serverConfig.apiKey}`;
+
+    const abortController = new AbortController();
+    // timeout of 3s
+    const timeout = setTimeout(() => {
+        abortController.abort();
+    }, 3000);
+
+    try {
+        const response = await fetch(url, {signal: abortController.signal});
+        clearTimeout(timeout);
+        if (!response.ok) {
+            if (response.status === 403) {
+                console.error(`Failed to restart ${tallyLightFqdn}: Invalid API key`);
+                return false;
+            }
+
+            console.error(`Failed to restart ${tallyLightFqdn}:`, response.statusText);
+            return false;
+        }
+        return true;
+    } catch (error) {
+        if (!(error instanceof Error && error.name === 'AbortError')) {
+            console.error(`Error restarting ${tallyLightFqdn}:`, error);
+        }
+        return false;
+    }
+};
+
+let instance: Bonjour | null = null;
+let instanceBrowser: Browser | null = null;
+
+const restartServiceBrowser = () => {
+    try {
+        console.log('Restarting service browser to avoid potential issues');
+
+        instanceBrowser?.stop();
+        instanceBrowser?.removeAllListeners('up');
+        instanceBrowser?.removeAllListeners('down');
+
+        instance?.destroy();
+
+        instance = new Bonjour();
+
+        instanceBrowser = instance.find({type: 'tallylight'});
+
+        instanceBrowser.on('up', async (service) => {
+            tallyLightServices.push({ service, lastPing: null });
+            console.log('Found tally light service:', service.fqdn);
+            await handleUpdate();
+            await sendPing(service.fqdn);
+        });
+
+        instanceBrowser.on('down', (service) => {
+            console.log('Tally light service went down:', service.fqdn);
+
+            const index = tallyLightServices.findIndex(s => s.service.fqdn === service.fqdn);
+            if (index !== -1) {
+                tallyLightServices.splice(index, 1);
+            }
+        });
+
+        instanceBrowser.start();
+        instanceBrowser.update();
+        console.log('Service browser restarted successfully');
+    } catch (error) {
+        console.error('Error restarting service browser:', error);
+    }
+};
+
+// add timeout that removes services that have not pinged in the last 15 seconds
+setInterval(() => {
+    const now = new Date();
+    let removed = false;
+    for (let i = tallyLightServices.length - 1; i >= 0; i--) {
+        const light = tallyLightServices[i];
+
+        if (!light) continue;
+
+        const {service, lastPing} = light;
+
+        if (lastPing && (now.getTime() - lastPing.getTime() > 15000)) {
+            console.log('Removing tally light service due to timeout:', service.fqdn);
+            tallyLightServices.splice(i, 1);
+            removed = true;
+        }
+    }
+    if (removed) {
+        handleUpdate().catch(error => {
+            console.error('Error updating lights after removing timed out services:', error);
+        });
+    }
+}, 5000);
 
 const app = express();
 
@@ -254,7 +439,7 @@ app.get('/api/data', async (_req, res) => {
 
     try {
         res.json({
-            lightsFound: tallyLightServices.map(service => ({
+            lightsFound: tallyLightServices.map(({ service, lastPing }) => ({
                 name: service.name,
                 type: service.type,
                 protocol: service.protocol,
@@ -262,12 +447,14 @@ app.get('/api/data', async (_req, res) => {
                 host: service.host,
                 fqdn: service.fqdn,
                 addresses: service.addresses,
-                txt: service.txt
+                txt: service.txt,
+                lastPing,
             })),
             scenes,
             configuredLights: serverConfig.lights,
             currentLightState,
             obsConnected,
+            tallylightInfos,
         });
     } catch (error) {
         console.error('Error fetching list:', error);
@@ -360,6 +547,17 @@ app.post('/api/updateScenes/:fqdn', async (req, res) => {
     res.json({success: true});
 });
 
+app.get('/api/restart/:fqdn', async (req, res) => {
+    const {fqdn} = req.params;
+
+    const success = await restartTallyLight(fqdn);
+    if (success) {
+        res.json({success: true});
+    } else {
+        res.status(500).json({success: false, error: 'Failed to restart light'});
+    }
+});
+
 const PORT = parseInt(process.env.PORT || '3000');
 const HOST = process.env.HOST || 'localhost';
 
@@ -379,6 +577,28 @@ app.listen(PORT, HOST, () => {
 });
 
 export const handleUpdate = async () => {
+    const updateCurrentState = async () => {
+        if (!obsConnected) {
+            console.warn('Not connected to OBS, skipping state update');
+            return;
+        }
+
+        try {
+            const currentProgram = await obs.call('GetCurrentProgramScene');
+            currentState.programSceneUuid = currentProgram.currentProgramSceneUuid;
+
+            const currentPreview = await obs.call('GetCurrentPreviewScene');
+            currentState.previewSceneUuid = currentPreview.currentPreviewSceneUuid;
+
+            console.log('Updated program scene:', currentState.programSceneUuid, currentProgram.currentProgramSceneName);
+            console.log('Updated preview scene:', currentState.previewSceneUuid, currentPreview.currentPreviewSceneName);
+        } catch (error) {
+            console.error('Error fetching scenes from OBS:', error);
+        }
+    };
+
+    await updateCurrentState();
+
     const determineState = (fqdn: string) => {
         try {
             const mapping = serverConfig.lights[fqdn];
@@ -418,7 +638,9 @@ export const handleUpdate = async () => {
 
             const result = await setTallyLightState(fqdn, state);
             if (!result.success) {
-                console.error(`Failed to set state for ${fqdn}:`, result.error);
+                if (!(result.error instanceof TallyLightOfflineError)) {
+                    console.error(`Failed to set state for ${fqdn}:`, result.error);
+                }
             }
         } catch (error) {
             console.error(`Error processing light ${fqdn}:`, error);
@@ -462,17 +684,12 @@ obs.on('ConnectionError', (error) => {
     console.error('OBS WebSocket error:', error);
 });
 
-obs.on('CurrentProgramSceneChanged', async (data) => {
-    currentState.programSceneUuid = data.sceneUuid;
-    console.log('Program scene changed to:', data.sceneName);
-
+// we cannot use the data from the event because it is not in sync with preview/program
+obs.on('CurrentProgramSceneChanged', async () => {
     await handleUpdate();
 });
 
-obs.on('CurrentPreviewSceneChanged', async (data) => {
-    currentState.previewSceneUuid = data.sceneUuid;
-    console.log('Preview scene changed to:', data.sceneName);
-
+obs.on('CurrentPreviewSceneChanged', async () => {
     await handleUpdate();
 });
 
@@ -500,5 +717,48 @@ try {
 setInterval(async () => {
     executeForEachLight(async (fqdn) => {
         await sendPing(fqdn);
+        await fetchTallylightInfos(fqdn);
     });
-}, 5000);
+}, 10000);
+
+restartServiceBrowser();
+
+// restart service browser every minute to avoid potential issues
+setInterval(() => {
+    try {
+        console.log('Restarting service browser to avoid potential issues');
+        restartServiceBrowser();
+        console.log('Service browser restarted successfully');
+    } catch (error) {
+        console.error('Error restarting service browser:', error);
+    }
+}, 60000);
+
+// send update every 15 seconds in case of missed events
+setInterval(async () => {
+    await handleUpdate();
+}, 15000);
+
+process.on('SIGINT', async () => {
+    console.log('Shutting down...');
+    instanceBrowser?.stop();
+    instance?.destroy();
+    await obs.disconnect();
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    console.log('Shutting down...');
+    instanceBrowser?.stop();
+    instance?.destroy();
+    await obs.disconnect();
+    process.exit(0);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled rejection at:', promise, 'reason:', reason);
+});

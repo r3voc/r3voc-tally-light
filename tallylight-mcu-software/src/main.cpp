@@ -10,6 +10,9 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <ArduinoNvs.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 
 #ifndef ESP32
 #error This code is intended to run on the ESP32 platform! Please check your Tools->Board menu.
@@ -17,6 +20,20 @@
 
 // Base Hostname
 constexpr const char baseHostname[] = "Tallylight-";
+
+// Secrets
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD "tallylight" // default, should be overridden in build flags
+#warning "OTA_PASSWORD not defined, using default 'tallylight'"
+#endif
+#ifndef AP_PASSWORD
+#define AP_PASSWORD "tallylight" // default, should be overridden in build flags
+#warning "AP_PASSWORD not defined, using default 'tallylight'"
+#endif
+#ifndef API_KEY
+#define API_KEY "tallylight" // default, should be overridden in build flags
+#warning "API_KEY not defined, using default 'tallylight'"
+#endif
 
 // LEDs
 constexpr uint8_t ledstripPin = 5;
@@ -35,7 +52,7 @@ enum TallyState : uint8_t
     TALLY_PREVIEW,
     TALLY_ERROR
     // update populateAllStates if new state is added
-} tallyState = TallyState::TALLY_OFF;
+} tallyState;
 
 String toString(TallyState state)
 {
@@ -87,7 +104,12 @@ void populateAllStates(JsonObject &obj)
 // Setup FastLED
 CRGB leds[ledCount];
 
+// Webserver on port 81
 static AsyncWebServer server(81);
+
+// Time client
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 0);
 
 // Function to generate a unique hostname by appending the last 3 bytes of the MAC address
 String generateHostname()
@@ -143,8 +165,14 @@ uint64_t lastPing = 1;
 
 uint64_t identifyStart = 0;
 
+uint64_t lastOtaTime = 0;
+
+bool otaInProgress = false;
+
 void setup()
 {
+    tallyState = TALLY_OFF;
+
     pinMode(builtinLed, OUTPUT);
     digitalWrite(builtinLed, HIGH); // Turn on during boot
 
@@ -157,7 +185,7 @@ void setup()
     FastLED.setBrightness(config.brightness);
     FastLED.clear();
 
-    fill_solid(leds, ledCount, CRGB::White);
+    fill_rainbow(leds, ledCount, 0, 255 / ledCount);
     FastLED.show();
 
     Serial.begin(115200);
@@ -189,7 +217,7 @@ void setup()
     wm.setCleanConnect(true);
     wm.setShowInfoUpdate(false);
 
-    bool res = wm.autoConnect(hostname.c_str(), "tallylight");
+    bool res = wm.autoConnect(hostname.c_str(), AP_PASSWORD);
 
     if (!res)
     {
@@ -225,7 +253,15 @@ void setup()
                 root["hostname"] = WiFi.getHostname();
                 root["ip"] = WiFi.localIP().toString();
                 root["tallyState"] = toString(tallyState);
+                root["gitHash"] = GIT_HASH;
+                root["gitDirty"] = GIT_DIRTY;
+                root["brightness"] = config.brightness;
+                root["millis"] = millis();
+                root["rssi"] = WiFi.RSSI();
+                root["utcEpoch"] = timeClient.getEpochTime();
+
                 populateAllStates(root);
+
                 String response;
                 if (serializeJson(doc, response) == 0)
                 {
@@ -239,6 +275,13 @@ void setup()
               {
                   bool noAction = true;
 
+                  // validate api key
+                  if (!request->hasParam("apiKey") || request->getParam("apiKey")->value() != API_KEY)
+                  {
+                      request->send(403, "application/json", "{\"error\":\"Invalid API key\", \"success\": false}");
+                      return;
+                  }
+
                   JsonDocument responseDoc;
                   JsonObject responseObj = responseDoc.to<JsonObject>();
 
@@ -247,6 +290,8 @@ void setup()
         request->send(400, "application/json", String("{\"error\":\"") + msg + String("\", \"success\": false}")); \
         return;                                                                                                    \
     }
+
+                  lastPing = millis();
 
                   if (request->hasParam("state"))
                   {
@@ -301,14 +346,32 @@ void setup()
     server.on("/ping", HTTP_GET, [](AsyncWebServerRequest *request)
               {
                   lastPing = millis();
-                  request->send(200, "text/plain", "pong");
-              });
+                  request->send(200, "text/plain", "pong"); });
 
     server.on("/identify", HTTP_GET, [](AsyncWebServerRequest *request)
               {
+                  // validate api key
+                  if (!request->hasParam("apiKey") || request->getParam("apiKey")->value() != API_KEY)
+                  {
+                      request->send(403, "application/json", "{\"error\":\"Invalid API key\", \"success\": false}");
+                      return;
+                  }
+
                   identifyStart = millis() + 5000; // identify for 10 seconds
-                  request->send(200, "application/json", "{\"success\": true}");
-              });
+                  request->send(200, "application/json", "{\"success\": true}"); });
+
+    server.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request)
+              {
+                  // validate api key
+                  if (!request->hasParam("apiKey") || request->getParam("apiKey")->value() != API_KEY)
+                  {
+                      request->send(403, "application/json", "{\"error\":\"Invalid API key\", \"success\": false}");
+                      return;
+                  }
+
+                  request->send(200, "application/json", "{\"success\": true, \"message\": \"Resetting...\"}");
+                  delay(1000);
+                  ESP.restart(); });
 
     server.begin();
 
@@ -316,11 +379,91 @@ void setup()
 
     fill_solid(leds, ledCount, CRGB::Black);
     FastLED.show();
+
+    // configure time client
+    timeClient.begin();
+
+    // configure OTA
+    ArduinoOTA.setHostname(hostname.c_str());
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.setMdnsEnabled(false);
+    ArduinoOTA.onStart([]()
+                       { 
+                        otaInProgress = true;
+                        server.end();
+
+                        String type;
+                        if (ArduinoOTA.getCommand() == U_FLASH)
+                            type = "sketch";
+                        else // U_SPIFFS
+                            type = "filesystem";
+
+                        // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
+                        Serial.println("Start updating " + type);
+                        lastOtaTime = millis();
+
+                        fill_rainbow(leds, ledCount, 0, 255 / ledCount);
+                        FastLED.show(); });
+    ArduinoOTA.onEnd([]()
+                     { 
+                        otaInProgress = false;
+                        Serial.println("\nEnd");
+                        fill_solid(leds, ledCount, CRGB::Black);
+                        FastLED.show();
+                        delay(100);
+                        fill_solid(leds, ledCount, CRGB::Green);
+                        FastLED.show();
+                        delay(500); });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
+                          { 
+                            otaInProgress = true;
+                            if (millis() - lastOtaTime > 500) {
+                            Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+                            lastOtaTime = millis();
+
+                            // fade from red to green
+                            uint8_t percent = progress / (total / 100);
+                            fill_solid(leds, ledCount, CRGB(255 - (percent * 2.55), percent * 2.55, 0));
+                            FastLED.show();
+                            } });
+    ArduinoOTA.onError([](ota_error_t error)
+                       {
+                          otaInProgress = false;
+                          Serial.printf("Error[%u]: ", error);
+                          if (error == OTA_AUTH_ERROR)
+                              Serial.println("Auth Failed");
+                          else if (error == OTA_BEGIN_ERROR)
+                              Serial.println("Begin Failed");
+                          else if (error == OTA_CONNECT_ERROR)
+                              Serial.println("Connect Failed");
+                            else if (error == OTA_RECEIVE_ERROR)
+                              Serial.println("Receive Failed");
+                          else if (error == OTA_END_ERROR)
+                              Serial.println("End Failed");
+
+                          fill_solid(leds, ledCount, CRGB::Red);
+                          FastLED.show();
+                          delay(2000);
+                          ESP.restart();
+                        });
+    ArduinoOTA.begin();
+
+    MDNS.enableArduino(3232, true); // enable OTA over mDNS
 }
 
 void loop()
 {
+    ArduinoOTA.handle();
+
+    if (otaInProgress)
+    {
+        // don't do anything else during OTA
+        // stop server
+        return;
+    }
+
     wm.process();
+    timeClient.update();
 
     // if no ping received for more than 25 seconds, go to error state
     if (lastPing != 0 && millis() - lastPing > 25000 && tallyState != TALLY_ERROR)
@@ -341,7 +484,6 @@ void loop()
         fill_solid(leds, ledCount, millis() % 500 < 250 ? CRGB::Blue : CRGB::Black);
         FastLED.setBrightness(255);
         FastLED.show();
-        delay(20);
         return;
     }
 
@@ -361,7 +503,7 @@ void loop()
         fill_solid(leds, ledCount, CRGB::OrangeRed);
         break;
     case TALLY_ERROR:
-        fill_solid(leds, ledCount, millis() % 1000 < 500 ? CRGB::DarkViolet : CRGB::Black);
+        fill_solid(leds, ledCount, timeClient.getEpochTime() % 2 < 1 ? CRGB::DarkViolet : CRGB::Black);
         break;
     default:
         fill_solid(leds, ledCount, CRGB::Black);

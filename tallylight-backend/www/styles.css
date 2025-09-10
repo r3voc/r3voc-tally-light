@@ -4,3 +4,13 @@ html {
     /* set font */
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
+
+.monospace {
+    font-family: monospace;
+    font-style: italic;
+}
+
+small.monospace {
+    font-size: 0.8em;
+    line-height: 1.2em;
+}

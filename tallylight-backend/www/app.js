@@ -1,4 +1,19 @@
 $(document).ready(() => {
+    /*
+    TallylightInfo {
+        hostname: string;
+        ip: string;
+        tallyState: TallyLightState;
+        gitHash: string;
+        gitDirty: 'dirty' | 'clean';
+        brightness: number;
+        millis: number;
+        rssi: number;
+        utcEpoch: number;
+    }
+     */
+    let configuredFqdns = [];
+
     const identifyLight = async (fqdn) => {
         try {
             const response = await fetch(`/api/identify/${encodeURIComponent(fqdn)}`);
@@ -71,7 +86,7 @@ $(document).ready(() => {
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ scenes })
+                body: JSON.stringify({scenes})
             });
 
             if (response.ok) {
@@ -83,6 +98,14 @@ $(document).ready(() => {
         } catch (error) {
             console.error('Error updating scenes:', error);
             alert(`Error updating scenes: ${error.message}`);
+        }
+    };
+
+    const restartLight = async (fqdn) => {
+        try {
+            await fetch(`/api/restart/${encodeURIComponent(fqdn)}`);
+        } catch (error) {
+            console.error('Error restarting light:', error);
         }
     };
 
@@ -114,7 +137,10 @@ $(document).ready(() => {
         }
     };
 
-    const populateDiscoveredTallylights = (lightsFound, configuredLights) => {
+    const populateDiscoveredTallylights = (
+        lightsFound,
+        configuredLights
+    ) => {
         /*
             {
                 name: service.name,
@@ -152,7 +178,7 @@ $(document).ready(() => {
                     <li data-fqdn="${light.fqdn}" data-port="${light.port}" data-name="${light.name}" class="list-group-item discoveredLight">
                         <strong>${light.name}</strong> (${light.type}) - ${light.addresses.join(', ')}
                         <br>
-                        <small>${light.fqdn}:${light.port}</small>
+                        <small class="monospace">${light.fqdn}:${light.port}</small>
                         <br>
                         <button class="btn btn-sm btn-primary configure-light-btn">Add</button>
                         <button class="btn btn-sm btn-secondary identify-light-btn">Identify</button>
@@ -184,11 +210,17 @@ $(document).ready(() => {
         }
     };
 
-    const populateConfiguredTallylights = (lightsFound, configuredLights, currentLightState, obsScenes) => {
+    const populateConfiguredTallylights = (
+        lightsFound,
+        configuredLights,
+        currentLightState,
+        obsScenes,
+        tallylightInfos
+    ) => {
         const $list = $('#configured-lights-list');
 
         // first, remove all items that are not in configuredLights
-        $list.find('li').each(function () {
+        $list.find('li.configuredLight').each(function () {
             const $li = $(this);
             const fqdn = $li.data('fqdn');
             const stillExists = configuredLights && fqdn in configuredLights;
@@ -218,20 +250,41 @@ $(document).ready(() => {
                         <li data-fqdn="${fqdn}" class="list-group-item configuredLight">
                             <strong>${entryFromDiscovery.name}</strong> (${entryFromDiscovery.type}) - ${entryFromDiscovery.addresses.join(', ')}
                             <br>
-                            <small>${entryFromDiscovery.fqdn}:${entryFromDiscovery.port}</small>
-                            <br><br>
+                            <small class="monospace">${entryFromDiscovery.fqdn}:${entryFromDiscovery.port}</small>
+                            <br>
                             <div class="mb-3">
                                 <label class="form-label">Brightness (0-255)</label>
                                 <input type="number" class="form-control brightness-input" min="0" max="255" value="${config.brightness || 0}">
                             </div>
-                            <div class="mb-3">
-                                <label class="form-label">Current Light State: </label>
-                                <span class="current-light-state">${currentLightState[fqdn] || 'Unknown'}</span>
-                                <div class="current-light-color-box" style="width: 64px; height: 64px; background-color: ${currentLightState[fqdn] || '#000'}; border: 1px solid #ccc; display: inline-block; vertical-align: middle; margin-left: 10px;"></div>
-                            </div>
-                            <div class="mb-3">
-                                <button class="btn btn-sm btn-danger remove-light-btn">Remove</button>
-                                <button class="btn btn-sm btn-secondary identify-light-btn">Identify</button>
+                            <div class="row">
+                                <div class="col">
+                                    <div class="mb-3">
+                                        <label class="form-label">Current Light State: </label>
+                                        <span class="current-light-state monospace">${currentLightState[fqdn] || 'Unknown'}</span>
+                                        <div class="current-light-color-box" style="width: 32px; height: 32px; background-color: ${currentLightState[fqdn] || '#000'}; border: 1px solid #ccc; display: inline-block; vertical-align: middle; margin-left: 10px; border-radius: 25%"></div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <button class="btn btn-sm btn-danger remove-light-btn">Remove</button>
+                                        <button class="btn btn-sm btn-secondary identify-light-btn">Identify</button>
+                                        <button class="btn btn-sm btn-warning restart-light-btn">Restart</button>
+                                        <a href="http://${entryFromDiscovery.addresses[0]}:${entryFromDiscovery.port}" target="_blank" class="btn btn-sm btn-outline-primary">Open Web Interface</a>
+                                    </div>
+                                </div>
+                                <div class="col">
+                                  <!-- Show gitHash, gitDirty, rssi and utcEpoch (formatted as date) from tallylightInfos if available -->
+                                  ${tallylightInfos && fqdn in tallylightInfos ? `
+                                    <div class="mb-3">
+                                        <label class="form-label">Tally Light Info:</label>
+                                        <ul>
+                                            <li>Git Hash: <span class="monospace attr-githash">${tallylightInfos[fqdn].gitHash} (${tallylightInfos[fqdn].gitDirty})</span></li>
+                                            <li>RSSI: <span class="monospace attr-rssi">${tallylightInfos[fqdn].rssi} dBm</span></li>
+                                            <li>Brightness: <span class="monospace attr-brightness">${tallylightInfos[fqdn].brightness}</span></li>
+                                            <li>Uptime: <span class="monospace attr-uptime">${(tallylightInfos[fqdn].millis / 1000).toFixed(0)} seconds</span></li>
+                                            <li>UTC Time: <span class="monospace attr-utctime">${new Date(tallylightInfos[fqdn].utcEpoch * 1000).toISOString()}</span></li>
+                                        </ul>
+                                    </div>
+                                  ` : ''}
+                                </div>
                             </div>
                             <hr>
                             <!-- Scenes configuration. it should be collapsible -->
@@ -239,9 +292,9 @@ $(document).ready(() => {
                                 <label class="form-label">Scenes</label>
                                 <div class="scenes-list" data-touched="false">
                                     ${obsScenes && obsScenes.length > 0 ? obsScenes.map(scene => {
-                                        // scene = { sceneIndex: number, sceneName: string, sceneUuid: string }. the uuid is what will be saved in config
-                                        const isChecked = config.visibleInScenes && config.visibleInScenes.includes(scene.sceneUuid) ? 'checked' : '';
-                                        return `
+                        // scene = { sceneIndex: number, sceneName: string, sceneUuid: string }. the uuid is what will be saved in config
+                        const isChecked = config.visibleInScenes && config.visibleInScenes.includes(scene.sceneUuid) ? 'checked' : '';
+                        return `
                                             <div class="form-check">
                                                 <input class="form-check-input scene-checkbox" type="checkbox" value="${scene.sceneUuid}" id="scene-${fqdn.replace(/\W/g, '_')}-${scene.sceneUuid}" ${isChecked} data-fqdn="${fqdn}" data-scene-uuid="${scene.sceneUuid}">
                                                 <label class="form-check-label" for="scene-${fqdn.replace(/\W/g, '_')}-${scene.sceneUuid}">
@@ -249,7 +302,7 @@ $(document).ready(() => {
                                                 </label>
                                             </div>
                                         `;
-                                    }).join('') : '<p>No scenes found in OBS.</p>'}
+                    }).join('') : '<p>No scenes found in OBS.</p>'}
                                 </div>
                                 <button class="btn btn-sm btn-primary save-scenes-btn">Save Scenes Configuration</button> 
                            </div>
@@ -316,6 +369,13 @@ $(document).ready(() => {
                         });
                         setSceneList(fqdn, selectedScenes);
                     });
+
+                    $li.find('.restart-light-btn').on('click', () => {
+                        if (confirm(`Are you sure you want to restart ${entryFromDiscovery.name}?`)) {
+                            restartLight(fqdn);
+                            alert(`Restart command sent to ${entryFromDiscovery.name}`);
+                        }
+                    });
                 } else {
                     // update current state and brightness
                     const currentState = currentLightState[fqdn];
@@ -329,6 +389,15 @@ $(document).ready(() => {
                     const $brightnessInput = existing.find('.brightness-input');
                     if ($brightnessInput[0].dataset.touched !== 'true') {
                         $brightnessInput.val(config.brightness || 0);
+                    }
+
+                    // update tallylightInfos if available
+                    if (tallylightInfos && fqdn in tallylightInfos) {
+                        existing.find('.attr-githash').text(`${tallylightInfos[fqdn].gitHash} (${tallylightInfos[fqdn].gitDirty})`);
+                        existing.find('.attr-rssi').text(`${tallylightInfos[fqdn].rssi} dBm`);
+                        existing.find('.attr-brightness').text(tallylightInfos[fqdn].brightness);
+                        existing.find('.attr-uptime').text(`${(tallylightInfos[fqdn].millis / 1000).toFixed(0)} seconds`);
+                        existing.find('.attr-utctime').text(new Date(tallylightInfos[fqdn].utcEpoch * 1000).toISOString());
                     }
 
                     // update scenes
@@ -391,13 +460,22 @@ $(document).ready(() => {
         //    configuredLights: [...],
         //    currentLightState: {...}
         //    obsConnected: true/false
+        //    tallylightInfo: {...}
         // }
+
+        configuredFqdns = data.configuredLights ? Object.keys(data.configuredLights) : [];
 
         if (data.lightsFound && data.configuredLights) {
             populateDiscoveredTallylights(data.lightsFound, data.configuredLights);
 
-            if (data.currentLightState && data.scenes) {
-                populateConfiguredTallylights(data.lightsFound, data.configuredLights, data.currentLightState, data.scenes);
+            if (data.currentLightState && data.scenes && data.tallylightInfos) {
+                populateConfiguredTallylights(
+                    data.lightsFound,
+                    data.configuredLights,
+                    data.currentLightState,
+                    data.scenes,
+                    data.tallylightInfos
+                );
             }
         }
 
@@ -420,4 +498,16 @@ $(document).ready(() => {
     } else {
         $('#debug').addClass('visually-hidden');
     }
+
+    // reboot-all-lights
+    $('#reboot-all-lights').on('click', () => {
+        if (confirm('Are you sure you want to reboot all configured lights?')) {
+            // for each configured light, call restartLight
+            console.log('Rebooting all lights:', configuredFqdns);
+            configuredFqdns.forEach(fqdn => {
+                restartLight(fqdn);
+            });
+            alert('Restart commands sent to all configured lights.');
+        }
+    });
 });
