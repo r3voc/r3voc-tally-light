@@ -9,6 +9,52 @@ on:
       - main
 
 jobs:
+  build-esp-firmware:
+    name: Build ESP Firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+
+      - name: Create secrets.env file
+        working-directory: ./tallylight-mcu-software
+        run: |
+          echo "OTA_PASSWORD=${{ secrets.OTA_PASSWORD }}" >> secrets.env
+          echo "AP_PASSWORD=${{ secrets.AP_PASSWORD }}" >> secrets.env
+          echo "API_KEY=${{ secrets.API_KEY }}" >> secrets.env
+          echo "OTA_SERVER_BASE_URL=${{ secrets.OTA_SERVER_BASE_URL }}" >> secrets.env
+
+      - name: Build ESP Firmware
+        working-directory: ./tallylight-mcu-software
+        run: pio run -e esp32dev
+
+      - name: Upload Firmware to OTA-Server
+        if: github.ref == 'refs/heads/main'
+        working-directory: ./tallylight-mcu-software
+        run: |
+          curl -X POST "${{ secrets.OTA_SERVER_BASE_URL }}/api/v1/firmware" \
+            -H "x-api-key: ${{ secrets.API_KEY }}" \
+            -F "file=@.pio/build/esp32dev/firmware.bin" \
+            -F "version=${{ github.sha }}" \
+            -F "device_type=esp32dev"
+
   build-container:
     name: Build and Push r3voc-tallylight-server
     runs-on: ubuntu-latest
