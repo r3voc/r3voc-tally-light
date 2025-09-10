@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Tallylight Backend</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="styles.css">
+
+    <!-- bootstrap -->
+    <script src="bootstrap/dist/js/bootstrap.bundle.min.js"></script>
+    <link href="bootstrap/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- bootstrap icons -->
+    <link rel="stylesheet" href="bootstrap-icons/font/bootstrap-icons.css">
+
+    <!-- jquery -->
+    <script src="jquery/dist/jquery.min.js"></script>
+
+    <!-- app.js -->
+    <script src="app.js"></script>
+</head>
+<body>
+    <div class="container">
+        <div class="row">
+            <div class="col-12">
+                <h1 class="mt-3">Tallylight Backend</h1>
+                <p class="lead">Manage your tally lights and settings here.</p>
+                <hr>
+            </div>
+            <!-- populateObsStatus will populate this -->
+            <div id="obs-status" class="col-12 mb-4">
+                <h2>OBS Status</h2>
+                <p class="text-muted">Status of the connection to OBS.</p>
+                <div id="obs-status-content" class="alert alert-secondary" role="alert">
+                    <i class="bi bi-info-circle"></i> <span id="obs-status-message">Connecting to OBS...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- List of tally lights -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <h2>Discovered Tally Lights</h2>
+                <p class="text-muted">These are the tally lights that have been discovered on your network.</p>
+                <div id="discovered-lights-list" class="list-group">
+                    <!-- Discovered lights will be dynamically populated here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <h2>Configured Tally Lights</h2>
+                <p class="text-muted">These are the tally lights that are currently configured.
+                <div id="configured-lights-list" class="list-group mb-4">
+                    <!-- Tally lights will be dynamically populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    <pre id="debug" class="visually-hidden"></pre>
+</body>
+</html>

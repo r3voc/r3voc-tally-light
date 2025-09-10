@@ -1,0 +1,6 @@
+html {
+    scroll-behavior: smooth;
+
+    /* set font */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}

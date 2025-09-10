@@ -1,0 +1,34 @@
+FROM node:22-alpine AS base
+
+WORKDIR /app
+
+# Install dependencies only when needed
+FROM base AS deps
+RUN apk add --no-cache libc6-compat
+
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile
+
+# Copy src/ and www/ files
+FROM base AS app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY ./src ./src
+COPY ./www ./www
+
+FROM app AS runner
+
+ENV NODE_ENV production
+
+ARG PORT=3000
+EXPOSE $PORT
+
+ENV HOST 0.0.0.0
+
+ARG COMMIT_SHA
+ENV COMMIT_SHA $COMMIT_SHA
+
+ARG CI_RUN_ID
+ENV CI_RUN_ID $CI_RUN_ID
+
+RUN yarn start
