@@ -12,7 +12,8 @@
 #include <ArduinoNvs.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
-#include <ArduinoOTA.h>
+#include <HTTPUpdate.h>
+#include <NetworkClient.h>
 
 #ifndef ESP32
 #error This code is intended to run on the ESP32 platform! Please check your Tools->Board menu.
@@ -382,84 +383,42 @@ void setup()
 
     // configure time client
     timeClient.begin();
-
-    // configure OTA
-    ArduinoOTA.setHostname(hostname.c_str());
-    ArduinoOTA.setPassword(OTA_PASSWORD);
-    ArduinoOTA.setMdnsEnabled(false);
-    ArduinoOTA.onStart([]()
-                       { 
-                        otaInProgress = true;
-                        server.end();
-
-                        String type;
-                        if (ArduinoOTA.getCommand() == U_FLASH)
-                            type = "sketch";
-                        else // U_SPIFFS
-                            type = "filesystem";
-
-                        // NOTE: if updating SPIFFS this would be the place to unmount SPIFFS using SPIFFS.end()
-                        Serial.println("Start updating " + type);
-                        lastOtaTime = millis();
-
-                        fill_rainbow(leds, ledCount, 0, 255 / ledCount);
-                        FastLED.show(); });
-    ArduinoOTA.onEnd([]()
-                     { 
-                        otaInProgress = false;
-                        Serial.println("\nEnd");
-                        fill_solid(leds, ledCount, CRGB::Black);
-                        FastLED.show();
-                        delay(100);
-                        fill_solid(leds, ledCount, CRGB::Green);
-                        FastLED.show();
-                        delay(500); });
-    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total)
-                          { 
-                            otaInProgress = true;
-                            if (millis() - lastOtaTime > 500) {
-                            Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-                            lastOtaTime = millis();
-
-                            // fade from red to green
-                            uint8_t percent = progress / (total / 100);
-                            fill_solid(leds, ledCount, CRGB(255 - (percent * 2.55), percent * 2.55, 0));
-                            FastLED.show();
-                            } });
-    ArduinoOTA.onError([](ota_error_t error)
-                       {
-                          otaInProgress = false;
-                          Serial.printf("Error[%u]: ", error);
-                          if (error == OTA_AUTH_ERROR)
-                              Serial.println("Auth Failed");
-                          else if (error == OTA_BEGIN_ERROR)
-                              Serial.println("Begin Failed");
-                          else if (error == OTA_CONNECT_ERROR)
-                              Serial.println("Connect Failed");
-                            else if (error == OTA_RECEIVE_ERROR)
-                              Serial.println("Receive Failed");
-                          else if (error == OTA_END_ERROR)
-                              Serial.println("End Failed");
-
-                          fill_solid(leds, ledCount, CRGB::Red);
-                          FastLED.show();
-                          delay(2000);
-                          ESP.restart();
-                        });
-    ArduinoOTA.begin();
-
-    MDNS.enableArduino(3232, true); // enable OTA over mDNS
 }
+
+bool hasTriedOta = false;
 
 void loop()
 {
-    ArduinoOTA.handle();
-
     if (otaInProgress)
     {
         // don't do anything else during OTA
         // stop server
         return;
+    }
+    
+    if (WiFi.status() == WL_CONNECTED && !hasTriedOta)
+    {
+        hasTriedOta = true;
+        NetworkClient client;
+        Serial.println("Checking for OTA update...");
+        t_httpUpdate_return ret = httpUpdate.update(client, OTA_SERVER_BASE_URL "/api/v1/firmware/latest?device_type=esp32dev", GIT_HASH, [](HTTPClient *client) {
+            client->setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+            client->addHeader("X-Api-Key", OTA_PASSWORD);
+        });
+        switch (ret)
+        {
+        case HTTP_UPDATE_FAILED:
+            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+            break;
+
+        case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("HTTP_UPDATE_NO_UPDATES");
+            break;
+
+        case HTTP_UPDATE_OK:
+            Serial.println("HTTP_UPDATE_OK");
+            break;
+        }
     }
 
     wm.process();
