@@ -55,7 +55,7 @@ jobs:
         run: |
           curl -X POST "${{ secrets.OTA_SERVER_BASE_URL }}/api/v1/firmware" \
             -H "x-api-key: ${{ secrets.OTA_SERVER_UPLOAD_KEY }}" \
-            -F "file=@.pio/build/esp32dev/firmware.bin" \
+            -F "firmware=@.pio/build/esp32dev/firmware.bin" \
             -F "version=${{ github.sha }}" \
             -F "device_type=esp32dev"
 
