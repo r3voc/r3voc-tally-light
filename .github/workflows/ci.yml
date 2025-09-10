@@ -31,7 +31,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install PlatformIO Core
-        run: pip install --upgrade platformio
+        run: pip install --upgrade platformio python-dotenv
 
       - name: Show PlatformIO info
         run: pio --version && pio system info
@@ -47,8 +47,6 @@ jobs:
       - name: Build ESP Firmware
         working-directory: ./tallylight-mcu-software
         run: |
-          # install dotenv with platformio virtual env
-          ~/.platformio/penv/bin/python -m pip install python-dotenv
           pio run -e esp32dev
 
       - name: Upload Firmware to OTA-Server
