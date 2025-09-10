@@ -412,7 +412,21 @@ void loop()
         httpUpdate.onEnd([]()
                          {
                              otaInProgress = false;
-                             Serial.println("OTA Update End"); });
+                             Serial.println("OTA Update End"); 
+
+                             // blink green 3 times
+                            for (int i = 0; i < 3; i++)
+                            {
+                                fill_solid(leds, ledCount, CRGB::Green);
+                                FastLED.show();
+                                delay(250);
+                                fill_solid(leds, ledCount, CRGB::Black);
+                                FastLED.show();
+                                delay(250);
+                            }
+
+                            Serial.println("Rebooting...");
+                         });
         httpUpdate.onProgress([](unsigned int progress, unsigned int total)
                               { 
                                 // print
