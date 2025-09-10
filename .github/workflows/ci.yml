@@ -46,7 +46,10 @@ jobs:
 
       - name: Build ESP Firmware
         working-directory: ./tallylight-mcu-software
-        run: pio run -e esp32dev
+        run: |
+          # install dotenv with platformio virtual env
+          ~/.platformio/penv/bin/python -m pip install python-dotenv
+          pio run -e esp32dev
 
       - name: Upload Firmware to OTA-Server
         if: github.ref == 'refs/heads/main'
