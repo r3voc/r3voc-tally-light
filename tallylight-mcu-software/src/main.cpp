@@ -55,6 +55,19 @@ enum TallyState : uint8_t
     // update populateAllStates if new state is added
 } tallyState;
 
+// General colors
+constexpr CRGB color_off = CRGB::Black;
+// constexpr CRGB color_wifi_not_connected[2] = { CRGB::Red, CRGB::Blue };
+constexpr CHSV color_wifi_not_connected[2] = { CHSV(0, 255, 255), CHSV(160, 255, 255) }; // Red to Cyan
+constexpr CRGB color_identify = CRGB::White;
+
+// State colors
+constexpr CRGB color_standby = CRGB::OrangeRed;
+constexpr CRGB color_program = CRGB::Red;
+constexpr CRGB color_preview = CRGB::Green;
+constexpr CRGB color_error = CRGB::Purple;
+
+
 String toString(TallyState state)
 {
     switch (state)
@@ -169,6 +182,10 @@ uint64_t identifyStart = 0;
 uint64_t lastOtaTime = 0;
 
 bool otaInProgress = false;
+
+bool hasTriedOta = false;
+
+bool lastWiFiConnected = true;
 
 void setup()
 {
@@ -378,7 +395,7 @@ void setup()
 
     digitalWrite(builtinLed, LOW); // Turn off after setup
 
-    fill_solid(leds, ledCount, CRGB::Black);
+    fill_solid(leds, ledCount, color_off);
     FastLED.show();
 
     // configure time client
@@ -386,8 +403,6 @@ void setup()
 
     timeClient.forceUpdate();
 }
-
-bool hasTriedOta = false;
 
 void loop()
 {
@@ -486,6 +501,31 @@ void loop()
     }
 
     wm.process();
+
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        if (lastWiFiConnected)
+        {
+            // set color to something that indicates no wifi
+            // fill_solid(leds, ledCount, color_wifi_not_connected);
+            /*void fill_gradient(T *targetArray, u16 startpos, CHSV startcolor,
+                   u16 endpos, CHSV endcolor,
+                   TGradientDirectionCode directionCode = SHORTEST_HUES)*/
+            fill_gradient(leds, 0, color_wifi_not_connected[0], ledCount - 1, color_wifi_not_connected[1], SHORTEST_HUES);
+            FastLED.setBrightness(255);
+            FastLED.show();
+            lastWiFiConnected = false;
+        }
+
+        // do not run rest of loop if no wifi is connected
+
+        return;
+    }
+    else
+    {
+        lastWiFiConnected = true;
+    }
+
     timeClient.update();
 
     // if no ping received for more than 25 seconds, go to error state
@@ -504,7 +544,7 @@ void loop()
     if (identifyStart != 0)
     {
         // blink blue
-        fill_solid(leds, ledCount, millis() % 500 < 250 ? CRGB::Blue : CRGB::Black);
+        fill_solid(leds, ledCount, millis() % 500 < 250 ? color_identify : color_off);
         FastLED.setBrightness(255);
         FastLED.show();
         return;
@@ -514,22 +554,23 @@ void loop()
     switch (tallyState)
     {
     case TALLY_OFF:
-        fill_solid(leds, ledCount, CRGB::Black);
+        fill_solid(leds, ledCount, color_off);
         break;
     case TALLY_STANDBY:
-        fill_solid(leds, ledCount, CRGB::Green);
+        fill_solid(leds, ledCount, color_standby);
         break;
     case TALLY_PROGRAM:
-        fill_solid(leds, ledCount, CRGB::Red);
+        fill_solid(leds, ledCount, color_program);
         break;
     case TALLY_PREVIEW:
-        fill_solid(leds, ledCount, CRGB::OrangeRed);
+        fill_solid(leds, ledCount, color_preview);
         break;
     case TALLY_ERROR:
-        fill_solid(leds, ledCount, timeClient.getEpochTime() % 2 < 1 ? CRGB::DarkViolet : CRGB::Black);
+        fill_solid(leds, ledCount, timeClient.getEpochTime() % 2 < 1 ? color_error : color_off);
         break;
     default:
-        fill_solid(leds, ledCount, CRGB::Black);
+        fill_solid(leds, ledCount, color_off);
+        Serial.printf("Unknown tally state: %d\n", tallyState);
         break;
     }
 
