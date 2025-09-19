@@ -425,6 +425,23 @@ setInterval(() => {
     }
 }, 5000);
 
+const restartObsWebSocket = async () => {
+    try {
+        obsConnected = false;
+        await obs.disconnect();
+    } catch (error) {
+        console.error('Error disconnecting from OBS:', error);
+    }
+
+    try {
+        await obs.connect(serverConfig.obsAddress, serverConfig.obsPassword);
+        obsConnected = true;
+        console.log('Reconnected to OBS successfully');
+    } catch (error) {
+        console.error('Failed to reconnect to OBS:', error);
+    }
+};
+
 const app = express();
 
 app.use(cors());
@@ -595,6 +612,10 @@ app.post('/api/config/:key', async (req, res) => {
     (serverConfig as any)[key] = value;
 
     await updateConfig();
+
+    if (key === 'obsAddress' || key === 'obsPassword') {
+        await restartObsWebSocket();
+    }
 
     res.json({success: true});
 });
