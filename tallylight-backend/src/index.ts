@@ -112,7 +112,8 @@ try {
     console.log('Configuration loaded successfully');
 } catch (error) {
     console.error('Error loading configuration, using default:', error);
-    process.exit(1);
+    serverConfig = defaultConfig;
+    fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2), 'utf-8');
 }
 
 // if version does not match with default, merge
