@@ -9,6 +9,7 @@ services:
       restart: unless-stopped
       environment:
         - PORT=3000 # change if needed
+        - HOST=127.0.0.1
       # map /app/config.json to persist your settings
       volumes:
         - ./config.json:/app/config.json

@@ -487,6 +487,138 @@ $(document).ready(() => {
         $('#debug').text(JSON.stringify(data, null, 2));
     };
 
+    const setConfigValue = async (key, value) => {
+        try {
+            const response = await fetch(`/api/config/${encodeURIComponent(key)}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({value})
+            });
+
+            if (response.ok) {
+                alert(`Configuration key ${key} set to ${value}`);
+                await fetchConfig(); // refresh the config display
+            } else {
+                const errorData = await response.json();
+                alert(`Failed to set configuration key ${key}: ${errorData.message || response.statusText}`);
+            }
+        } catch (error) {
+            console.error('Error setting configuration key:', error);
+            alert(`Error setting configuration key: ${error.message}`);
+        }
+    };
+
+    const fetchConfig = async () => {
+        const response = await fetch('/api/config');
+        const data = await response.json();
+
+        // build a table in #config-display with the config key, data type and value. there should also be a setter
+        const display = $('#config-display');
+        display.empty();
+
+        const $table = $(`
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th>Key</th>
+                        <th>Type</th>
+                        <th>Value</th>
+                        <th>Set New Value</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        `);
+
+        Object.entries(data).forEach(([key, value]) => {
+            let valueType = typeof value;
+            if (Array.isArray(value)) {
+                valueType = 'array';
+            } else if (value === null) {
+                valueType = 'null';
+            }
+
+            const $row = $(`
+                <tr>
+                    <td class="monospace">${key}</td>
+                    <td>${valueType}</td>
+                    <td class="monospace current-value">${Array.isArray(value) ? JSON.stringify(value) : String(value)}</td>
+                    <td>
+                        ${valueType === 'boolean' ? `
+                            <select class="form-select new-value-input" data-key="${key}" style="width: auto; display: inline-block;">
+                                <option value="true" ${value === true ? 'selected' : ''}>true</option>
+                                <option value="false" ${value === false ? 'selected' : ''}>false</option>
+                            </select>
+                        ` : valueType === 'number' ? `
+                            <input type="number" class="form-control new-value-input" data-key="${key}" value="${value}" style="width: auto; display: inline-block;">
+                        ` : valueType === 'string' ? `
+                            <input type="text" class="form-control new-value-input" data-key="${key}" value="${value}" style="width: auto; display: inline-block;">
+                        ` : valueType === 'array' ? `
+                            <input type="text" class="form-control new-value-input" data-key="${key}" value='${JSON.stringify(value)}' style="width: auto; display: inline-block;">
+                        ` : valueType === 'null' ? `
+                            <input type="text" class="form-control new-value-input" data-key="${key}" placeholder="null" style="width: auto; display: inline-block;">
+                        ` : `
+                            <input type="text" class="form-control new-value-input" data-key="${key}" value='${String(value)}' style="width: auto; display: inline-block;">
+                        `}
+                        <button class="btn btn-sm btn-primary set-value-btn" data-key="${key}">Set</button>
+                    </td>
+                </tr>
+            `);
+
+            $table.find('tbody').append($row);
+        });
+
+        display.append($table);
+
+        // bind events to set buttons
+        $table.find('.set-value-btn').on('click', (e) => {
+            const key = e.target.dataset.key;
+            const $input = $table.find(`.new-value-input[data-key="${key}"]`);
+            let newValue = $input.val();
+
+            // parse the value based on its type
+            const currentValue = data[key];
+            let parsedValue;
+
+            if (typeof currentValue === 'boolean') {
+                parsedValue = newValue === 'true';
+            } else if (typeof currentValue === 'number') {
+                parsedValue = Number(newValue);
+                if (isNaN(parsedValue)) {
+                    alert('Please enter a valid number');
+                    return;
+                }
+            } else if (typeof currentValue === 'string') {
+                parsedValue = newValue;
+            } else if (Array.isArray(currentValue)) {
+                try {
+                    parsedValue = JSON.parse(newValue);
+                    if (!Array.isArray(parsedValue)) {
+                        alert('Please enter a valid array in JSON format');
+                        return;
+                    }
+                } catch (error) {
+                    alert('Please enter a valid array in JSON format');
+                    return;
+                }
+            } else if (currentValue === null) {
+                if (newValue.toLowerCase() === 'null' || newValue === '') {
+                    parsedValue = null;
+                } else {
+                    parsedValue = newValue;
+                }
+            } else {
+                parsedValue = newValue;
+            }
+
+            setConfigValue(key, parsedValue);
+        });
+    };
+
+    fetchConfig();
+
     fetchApi();
 
     setInterval(fetchApi, 1500);

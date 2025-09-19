@@ -25,6 +25,7 @@ export interface TallyLightMapping {
 
 export interface ServerConfig {
     lights: Record<FQDN, TallyLightMapping>;
+    obsAddress: string;
     obsPassword: string;
     apiKey: string;
     version: number;
@@ -88,6 +89,7 @@ const currentState: {
 // Load server configuration
 const defaultConfig: ServerConfig = {
     lights: {},
+    obsAddress: 'ws://localhost:4455',
     obsPassword: '',
     apiKey: '',
     version: 2
@@ -556,6 +558,44 @@ app.get('/api/restart/:fqdn', async (req, res) => {
     } else {
         res.status(500).json({success: false, error: 'Failed to restart light'});
     }
+});
+
+const allowedConfigGetter: (keyof ServerConfig)[] = ['apiKey', 'obsAddress', 'obsPassword'];
+const allowedConfigSetter: (keyof ServerConfig)[] = ['apiKey', 'obsAddress', 'obsPassword'];
+
+app.get('/api/config', async (req, res) => {
+    res.setHeader('Content-Disposition', 'attachment; filename="config.json"');
+    res.setHeader('Content-Type', 'application/json');
+
+    const filteredConfig: Partial<ServerConfig> = {};
+    for (const key in serverConfig) {
+        if (allowedConfigGetter.includes(key as keyof ServerConfig)) {
+            (filteredConfig as any)[key] = (serverConfig)[key as keyof ServerConfig];
+        }
+    }
+
+    res.send(JSON.stringify(filteredConfig, null, 2));
+});
+
+app.post('/api/config/:key', async (req, res) => {
+    const {key} = req.params;
+    const {value} = req.body;
+
+    if (!allowedConfigSetter.includes(key as keyof ServerConfig)) {
+        res.status(400).json({success: false, error: 'Invalid configuration key'});
+        return;
+    }
+
+    if (typeof value !== 'string') {
+        res.status(400).json({success: false, error: 'Value must be a string'});
+        return;
+    }
+
+    (serverConfig as any)[key] = value;
+
+    await updateConfig();
+
+    res.json({success: true});
 });
 
 const PORT = parseInt(process.env.PORT || '3000');
