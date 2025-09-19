@@ -6,7 +6,7 @@ services:
       network_mode: host # required for mDNS
       cap_add:
         - NET_ADMIN # required for mDNS
-      restart: unless-stopped
+      restart: always
       environment:
         - PORT=3000 # change if needed
         - HOST=127.0.0.1 # This is so that it is required to have physical access to the machine to access the web interface.
