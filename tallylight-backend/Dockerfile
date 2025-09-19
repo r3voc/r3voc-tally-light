@@ -17,6 +17,8 @@ COPY --from=deps /app/package.json ./package.json
 COPY ./src ./src
 COPY ./www ./www
 
+RUN touch /app/config.json
+
 FROM app AS runner
 
 ENV NODE_ENV production
