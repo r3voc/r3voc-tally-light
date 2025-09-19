@@ -1,7 +1,7 @@
 name: r3voc-tallylight
 services:
   r3voc-tallylight:
-      image: ghcr.io/realraum/r3voc-tally-light:latest
+      image: ghcr.io/r3voc/r3voc-tally-light:latest
       container_name: r3voc-tallylight
       network_mode: host # required for mDNS
       cap_add:
