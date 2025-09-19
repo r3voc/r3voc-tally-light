@@ -712,7 +712,7 @@ obs.on('ConnectionClosed', () => {
     console.warn('Connection to OBS closed, attempting to reconnect in 5 seconds...');
     setTimeout(async () => {
         try {
-            await obs.connect('ws://localhost:4455', serverConfig.obsPassword);
+            await obs.connect(serverConfig.obsAddress, serverConfig.obsPassword);
             console.log('Reconnected to OBS successfully');
         } catch (error) {
             console.error('Failed to reconnect to OBS:', error);
@@ -735,7 +735,7 @@ obs.on('CurrentPreviewSceneChanged', async () => {
 });
 
 try {
-    await obs.connect('ws://localhost:4455', serverConfig.obsPassword);
+    await obs.connect(serverConfig.obsAddress, serverConfig.obsPassword);
 
     try {
         const currentProgram = await obs.call('GetCurrentProgramScene');
