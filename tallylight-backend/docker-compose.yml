@@ -9,7 +9,7 @@ services:
       restart: unless-stopped
       environment:
         - PORT=3000 # change if needed
-        - HOST=127.0.0.1
+        - HOST=127.0.0.1 # This is so that it is required to have physical access to the machine to access the web interface.
       # map /app/config.json to persist your settings
       volumes:
         - ./config.json:/app/config.json
